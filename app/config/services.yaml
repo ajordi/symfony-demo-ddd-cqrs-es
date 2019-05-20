@@ -1,0 +1,173 @@
+# This file is the entry point to configure your own services.
+# Files in the packages/ subdirectory configure your dependencies.
+
+# Put parameters here that don't need to change on each machine where the app is deployed
+# https://symfony.com/doc/current/best_practices/configuration.html#application-related-configuration
+parameters:
+
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        autowire: true      # Automatically injects dependencies in your services.
+        autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+
+    # makes classes in src/ available to be used as services
+    # this creates a service per class whose id is the fully-qualified class name
+    App\:
+        resource: '../src/*'
+        exclude: '../src/{Kernel.php}'
+
+    # controllers are imported separately to make sure services can be injected
+    # as action arguments even if you don't extend any base controller class
+
+
+    # add more service definitions when explicit configuration is needed
+    # please note that last definitions always *replace* previous ones
+
+    App\Shared\Infrastructure\Messenger\AMQP\:
+        resource: '../src/Shared/Infrastructure/Messenger/AMQP/*'
+        exclude: '../src/Shared/Infrastructure/Messenger/AMQP/QueueBinder.php'
+
+    ### Listeners ###
+
+    App\Shared\Infrastructure\Messenger\AMQP\EventDispatcher:
+        tags: ['broadway.domain.event_listener']
+
+    ### Command Handlers ###
+
+    App\BP\Users\Application\Notify\NotifyEmailValidationCommandHandler:
+        arguments:
+            - '@swiftmailer.mailer'
+        tags: ['broadway.command_handler']
+
+    App\BP\Users\Application\Create\CreateUserHandler:
+        tags: ['broadway.command_handler']
+
+    ### UI Cli Command ###
+
+    App\BP\Users\Infrastructure\Ui\Cli\CreateUserCommand:
+        arguments:
+            - '@broadway.command_handling.command_bus'
+
+    ### Repositories ####
+
+    App\Shared\Infrastructure\Doctrine\DoctrineRepository:
+        abstract: true
+        arguments:
+            - '@doctrine.orm.entity_manager'
+            - '@broadway.event_store'
+            - '@broadway.event_handling.event_bus'
+
+    App\BP\Users\Domain\UserRepository\UserRepository: '@App\BP\Users\Infrastructure\Persistence\DoctrineUserRepository'
+    App\BP\Users\Infrastructure\Persistence\DoctrineUserRepository:
+        parent: 'App\Shared\Infrastructure\Doctrine\DoctrineRepository'
+        public: true
+        autowire: true
+        autoconfigure: false
+
+    ### Processors ####
+
+    App\BP\Users\Application\Notify\NotifyEmailValidationOnUserRegisteredProcessor:
+        arguments:
+            $commandBus: '@broadway.command_handling.command_bus'
+
+    consumer_notify_validation_on_user_registered:
+        public: true
+        class: App\Shared\Infrastructure\Messenger\AMQP\MessageHandler
+        arguments:
+            $messageProcessor: '@App\BP\Users\Application\Notify\NotifyEmailValidationOnUserRegisteredProcessor'
+            $AMQPMessageDecoder: '@App\Shared\Infrastructure\Messenger\AMQP\EventDecoder'
+            $AMQPMetadataDecoder: '@App\Shared\Infrastructure\Messenger\AMQP\MetadataDecoder'
+
+    ### AMQP ###
+
+    App\Shared\Infrastructure\Messenger\AMQP\ConnectionFactory:
+        arguments:
+            $host: 'rabbitmq'
+            $port: '5672'
+            $username: 'guest'
+            $password: 'guest'
+            $vhost: '/'
+            $sslOptions: []
+            $connectOptions:
+                - heartbeat: 10
+                - read_write_timeout: 20
+
+    App\Shared\Infrastructure\Messenger\AMQP\BaseAMQP:
+        abstract: true
+        public: false
+        autowire: false
+        autoconfigure: false
+        arguments:
+            $connection: '@App\Shared\Infrastructure\Messenger\AMQP\ConnectionFactory'
+
+    App\Shared\Infrastructure\Messenger\AMQP\MessagePublisher:
+        parent: 'App\Shared\Infrastructure\Messenger\AMQP\BaseAMQP'
+        public: true
+        autowire: false
+        autoconfigure: false
+
+
+    App\Shared\Infrastructure\Ui\Cli\SetupQueueFromExchange:
+        arguments:
+            $connection: '@App\Shared\Infrastructure\Messenger\AMQP\ConnectionFactory'
+            $exchanges:
+                acme-event:
+                    properties:
+                        exchange_type: 'direct'
+                        consumer_tag: 'consumer'
+                        ssl_options: []
+                        connect_options:
+                            - heartbeat: 10
+                            - read_write_timeout: 20
+                        queue_properties: []
+                        exchange_properties: []
+                        exchange_durable: true
+                        exchange_auto_delete: false
+                        timeout: 0
+                    queues:
+                        notify_validation_on_user_registered:
+                            type: 'event'
+                            handler: 'App\BP\Users\Application\Notify\NotifyEmailValidationOnUserRegisteredProcessor'
+                            routing_key: 'user.registered'
+                            queue_properties:
+                                - queue_durable: true
+                                - queue_autodelete: false
+                                - persistent: true
+
+    App\Shared\Infrastructure\Messenger\AMQP\QueueBinder:
+        arguments:
+            $exchange: 'acme-event'
+            $prefetchSize: 0
+            $prefetchCount: 0
+            $isGlobal: false
+
+    App\Shared\Infrastructure\Messenger\QueueConfigResolver:
+        arguments:
+            $exchanges:
+                acme-event:
+                    properties:
+                        exchange_type: 'direct'
+                        consumer_tag: 'consumer'
+                        ssl_options: []
+                        connect_options:
+                            - heartbeat: 10
+                            - read_write_timeout: 20
+                        queue_properties: []
+                        exchange_properties: []
+                        exchange_durable: true
+                        exchange_auto_delete: false
+                        timeout: 0
+                    queues:
+                        notify_validation_on_user_registered:
+                            type: 'event'
+                            handler: 'App\BP\Users\Application\Notify\NotifyEmailValidationOnUserRegisteredProcessor'
+                            routing_key: 'user.registered'
+                            queue_properties:
+                                - queue_durable: true
+                                - queue_autodelete: false
+                                - persistent: true
+
+    App\Shared\Infrastructure\Messenger\AMQP\ConsumerResolver:
+        arguments:
+            $container: '@service_container'

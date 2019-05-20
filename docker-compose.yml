@@ -1,0 +1,83 @@
+version: '3.5'
+
+networks:
+    server-network:
+        driver: bridge
+
+volumes:
+  mysql-vol:
+    driver: local
+
+services:
+  php:
+      build:
+        context: .
+        dockerfile: docker/php/Dockerfile
+      volumes:
+        - ./app:/opt/app
+        - ./docker/php/entrypoint.sh:/entrypoint.sh
+      networks:
+        - server-network
+      environment:
+        - XDEBUG_CONFIG="idekey=docker"
+        - XDEBUG_REMOTE_HOST=${XDEBUG_REMOTE_HOST}
+        - PHP_IDE_CONFIG=${PHP_IDE_CONFIG}
+        - APP_ENV=${APP_ENV}
+        - APP_DEBUG=${APP_DEBUG}
+        - APP_SECRET=${APP_SECRET}
+        - MYSQL_HOST=${MYSQL_HOST}
+        - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+        - MYSQL_DATABASE=${MYSQL_DATABASE}
+        - MYSQL_DATABASE_TEST=${MYSQL_DATABASE_TEST}
+        - MYSQL_USER=${MYSQL_USER}
+        - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+        - MAILER_URL=${MAILER_URL}
+      ports:
+        - "2222:22"
+      entrypoint:
+        - /entrypoint.sh
+  nginx:
+      build:
+        context: .
+        dockerfile: docker/nginx/Dockerfile
+      volumes:
+        - ./app/public:/opt/app/public
+      ports:
+        - "80:80"
+        - "443:443"
+      networks:
+        - server-network
+      depends_on:
+        - php
+  mysql:
+      image: mysql:5.7.22
+      restart: unless-stopped
+      ports:
+        - "3306:3306"
+      networks:
+          - server-network
+      volumes:
+        - ./docker/db/config/docker.cnf:/etc/mysql/conf.d/docker.cnf
+        - mysql-vol:/var/lib/mysql
+      environment:
+        - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+        - MYSQL_DATABASE=${MYSQL_DATABASE}
+        - MYSQL_USER=${MYSQL_USER}
+        - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+  rabbitmq:
+      image: rabbitmq:3.8-rc-management
+      networks:
+        - server-network
+      ports:
+        - "15671:15671"
+        - "15672:15672"
+      environment:
+        LOGSPOUT: 'ignore'
+  mail:
+    image: mailhog/mailhog
+    networks:
+      - server-network
+    ports:
+      - "8025:8025"
+    environment:
+      LOGSPOUT: 'ignore'
